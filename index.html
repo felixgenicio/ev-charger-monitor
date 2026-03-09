@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cargadores EV - Cadrete</title>
+  <style>
+    :root {
+      --available: #22c55e;
+      --charging:  #ef4444;
+      --unknown:   #94a3b8;
+      --outoforder:#f97316;
+      --bg:        #0f172a;
+      --card:      #1e293b;
+      --border:    #334155;
+      --text:      #f1f5f9;
+      --muted:     #94a3b8;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+      padding: 1.5rem 1rem;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+    header h1 { font-size: 1.5rem; font-weight: 700; }
+    header p  { color: var(--muted); font-size: 0.875rem; margin-top: 0.25rem; }
+
+    .stations {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 1.5rem;
+      max-width: 900px;
+      margin: 0 auto 2.5rem;
+    }
+
+    .station-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.25rem;
+    }
+
+    .station-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+
+    .status-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .station-title { font-weight: 600; font-size: 1rem; }
+    .station-addr  { color: var(--muted); font-size: 0.75rem; margin-top: 2px; }
+
+    .evse-list { display: flex; flex-direction: column; gap: 0.5rem; }
+
+    .evse-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #0f172a;
+      border-radius: 8px;
+      padding: 0.6rem 0.75rem;
+      font-size: 0.85rem;
+    }
+
+    .evse-left   { display: flex; align-items: center; gap: 0.5rem; }
+    .evse-dot    { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .evse-id     { color: var(--muted); font-size: 0.75rem; }
+    .evse-right  { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+    .evse-status { font-weight: 600; font-size: 0.8rem; }
+    .evse-info   { color: var(--muted); font-size: 0.7rem; }
+
+    /* History section */
+    .history-section {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    .history-section h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .timeline-block {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.25rem;
+      margin-bottom: 1rem;
+    }
+
+    .timeline-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-bottom: 0.75rem;
+    }
+
+    .evse-timeline { margin-bottom: 0.75rem; }
+    .evse-timeline:last-child { margin-bottom: 0; }
+
+    .evse-timeline-label {
+      font-size: 0.7rem;
+      color: var(--muted);
+      margin-bottom: 3px;
+    }
+
+    .timeline-bar {
+      display: flex;
+      height: 20px;
+      border-radius: 4px;
+      overflow: hidden;
+      gap: 1px;
+      background: var(--border);
+    }
+
+    .timeline-cell {
+      flex: 1;
+      min-width: 1px;
+    }
+
+    .timeline-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.65rem;
+      color: var(--muted);
+      margin-top: 3px;
+    }
+
+    /* Legend */
+    .legend {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      margin: 1.5rem 0;
+      flex-wrap: wrap;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+    .legend-item { display: flex; align-items: center; gap: 0.35rem; }
+    .legend-dot  { width: 10px; height: 10px; border-radius: 50%; }
+
+    .error-msg {
+      text-align: center;
+      color: var(--muted);
+      padding: 3rem;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .badge-available { background: #16532d; color: #4ade80; }
+    .badge-charging  { background: #7f1d1d; color: #f87171; }
+    .badge-unknown   { background: #1e293b; color: #94a3b8; border: 1px solid var(--border); }
+    .badge-outoforder{ background: #7c2d12; color: #fb923c; }
+
+    @media (max-width: 500px) {
+      .evse-row { flex-direction: column; align-items: flex-start; gap: 0.4rem; }
+      .evse-right { align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Cargadores EV &mdash; Cadrete</h1>
+  <p id="last-update">Cargando datos...</p>
+</header>
+
+<div id="stations" class="stations"></div>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:var(--available)"></div> Disponible</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--charging)"></div> Ocupado</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--outoforder)"></div> Fuera de servicio</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--unknown)"></div> Desconocido</div>
+</div>
+
+<div class="history-section">
+  <h2>Historial &mdash; &uacute;ltimas 24 h</h2>
+  <div id="history"></div>
+</div>
+
+<script>
+  const STATUS_COLOR = {
+    AVAILABLE:   'var(--available)',
+    CHARGING:    'var(--charging)',
+    OUT_OF_ORDER:'var(--outoforder)',
+    UNKNOWN:     'var(--unknown)',
+  };
+
+  function statusColor(s) {
+    return STATUS_COLOR[s] || STATUS_COLOR.UNKNOWN;
+  }
+
+  function statusBadgeClass(s) {
+    if (s === 'AVAILABLE')    return 'badge-available';
+    if (s === 'CHARGING')     return 'badge-charging';
+    if (s === 'OUT_OF_ORDER') return 'badge-outoforder';
+    return 'badge-unknown';
+  }
+
+  function statusLabel(s) {
+    const labels = {
+      AVAILABLE:    'Disponible',
+      CHARGING:     'Ocupado',
+      OUT_OF_ORDER: 'Fuera de servicio',
+      UNKNOWN:      'Desconocido',
+    };
+    return labels[s] || s;
+  }
+
+  function formatDate(iso) {
+    const d = new Date(iso);
+    return d.toLocaleString('es-ES', {
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+      timeZoneName: 'short',
+    });
+  }
+
+  function shortEvseId(evseId) {
+    // Return last segment after last *
+    const parts = evseId.split('*');
+    return `Conector ${parts[parts.length - 1]}`;
+  }
+
+  function renderStations(stations) {
+    const container = document.getElementById('stations');
+    container.innerHTML = '';
+
+    stations.forEach(station => {
+      const card = document.createElement('div');
+      card.className = 'station-card';
+
+      const evseRows = station.evses.map(evse => {
+        const plug = evse.plugs[0] || {};
+        const price = plug.price != null
+          ? `${(plug.price / 100).toFixed(2)} ${plug.currency}/${plug.typePrice}`
+          : '';
+        const power = plug.maxPower ? `${plug.maxPower} kW` : '';
+        const info = [plug.typology, power, price].filter(Boolean).join(' &middot; ');
+
+        return `
+          <div class="evse-row">
+            <div class="evse-left">
+              <div class="evse-dot" style="background:${statusColor(evse.status)}"></div>
+              <span class="evse-id">${shortEvseId(evse.evseId)}</span>
+            </div>
+            <div class="evse-right">
+              <span class="badge ${statusBadgeClass(evse.status)}">${statusLabel(evse.status)}</span>
+              ${info ? `<span class="evse-info">${info}</span>` : ''}
+            </div>
+          </div>`;
+      }).join('');
+
+      const stationName = station.name || `Cargador ${station.id.slice(-6)}`;
+
+      card.innerHTML = `
+        <div class="station-header">
+          <div class="status-dot" style="background:${statusColor(station.status)}"></div>
+          <div>
+            <div class="station-title">${stationName}</div>
+            <div class="station-addr">${station.street || station.city}</div>
+          </div>
+        </div>
+        <div class="evse-list">${evseRows}</div>`;
+
+      container.appendChild(card);
+    });
+  }
+
+  function renderHistory(stations, history) {
+    const container = document.getElementById('history');
+    container.innerHTML = '';
+
+    // Build per-evse history indexed by evseId
+    const evseHistory = {}; // evseId -> [{timestamp, status}]
+
+    history.forEach(entry => {
+      entry.stations.forEach(st => {
+        st.evses.forEach(ev => {
+          if (!evseHistory[ev.evseId]) evseHistory[ev.evseId] = [];
+          evseHistory[ev.evseId].push({ timestamp: entry.timestamp, status: ev.status });
+        });
+      });
+    });
+
+    stations.forEach(station => {
+      const block = document.createElement('div');
+      block.className = 'timeline-block';
+
+      const stationName = station.name || `Cargador ${station.id.slice(-6)}`;
+      let html = `<div class="timeline-title">${stationName}</div>`;
+
+      station.evses.forEach(evse => {
+        const entries = evseHistory[evse.evseId] || [];
+        const cells = entries.map(e =>
+          `<div class="timeline-cell" style="background:${statusColor(e.status)}" title="${statusLabel(e.status)} — ${formatDate(e.timestamp)}"></div>`
+        ).join('');
+
+        const labelStart = entries.length > 0 ? formatDate(entries[0].timestamp).slice(0, 10) : '';
+        const labelEnd   = entries.length > 0 ? formatDate(entries[entries.length - 1].timestamp).slice(0, 10) : '';
+
+        html += `
+          <div class="evse-timeline">
+            <div class="evse-timeline-label">${shortEvseId(evse.evseId)}</div>
+            <div class="timeline-bar">${cells || '<div style="flex:1;background:var(--border)"></div>'}</div>
+            <div class="timeline-labels">
+              <span>${labelStart}</span>
+              <span>${labelEnd}</span>
+            </div>
+          </div>`;
+      });
+
+      block.innerHTML = html;
+      container.appendChild(block);
+    });
+  }
+
+  async function loadData() {
+    const el = document.getElementById('last-update');
+    try {
+      const resp = await fetch('data/chargers.json');
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+
+      el.textContent = `Última actualización: ${formatDate(data.lastUpdate)}`;
+
+      renderStations(data.stations);
+      renderHistory(data.stations, data.history);
+    } catch (err) {
+      el.textContent = 'No hay datos disponibles aún. Ejecuta fetch_chargers.py para inicializar.';
+      document.getElementById('stations').innerHTML =
+        '<div class="error-msg">Sin datos. Comprueba que el script de recolección está en marcha.</div>';
+    }
+  }
+
+  loadData();
+  // Reload every 5 minutes
+  setInterval(loadData, 5 * 60 * 1000);
+</script>
+
+</body>
+</html>
