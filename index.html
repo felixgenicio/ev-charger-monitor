@@ -87,7 +87,7 @@
 
     /* History section */
     .history-section {
-      max-width: 900px;
+      max-width: 960px;
       margin: 0 auto;
     }
 
@@ -100,7 +100,7 @@
       letter-spacing: 0.05em;
     }
 
-    .timeline-block {
+    .heatmap-block {
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: 12px;
@@ -108,22 +108,41 @@
       margin-bottom: 1rem;
     }
 
-    .timeline-title {
+    .heatmap-block-title {
       font-size: 0.85rem;
       font-weight: 600;
-      margin-bottom: 0.75rem;
+      margin-bottom: 1rem;
     }
 
-    .evse-timeline { margin-bottom: 0.75rem; }
-    .evse-timeline:last-child { margin-bottom: 0; }
+    .heatmap-evse { margin-bottom: 1.25rem; }
+    .heatmap-evse:last-child { margin-bottom: 0; }
 
-    .evse-timeline-label {
+    .heatmap-evse-label {
       font-size: 0.7rem;
       color: var(--muted);
-      margin-bottom: 3px;
+      margin-bottom: 6px;
     }
 
-    .timeline-bar {
+    .heatmap-scroll {
+      overflow-x: auto;
+      border-radius: 4px;
+    }
+
+    .heatmap-scroll canvas { display: block; }
+
+    /* 24h bar */
+    .bar-block {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.25rem;
+      margin-bottom: 1rem;
+    }
+    .bar-block-title { font-size: 0.85rem; font-weight: 600; margin-bottom: 0.75rem; }
+    .bar-evse        { margin-bottom: 0.75rem; }
+    .bar-evse:last-child { margin-bottom: 0; }
+    .bar-evse-label  { font-size: 0.7rem; color: var(--muted); margin-bottom: 3px; }
+    .bar-strip {
       display: flex;
       height: 20px;
       border-radius: 4px;
@@ -131,18 +150,45 @@
       gap: 1px;
       background: var(--border);
     }
-
-    .timeline-cell {
-      flex: 1;
-      min-width: 1px;
-    }
-
-    .timeline-labels {
+    .bar-cell { flex: 1; min-width: 1px; }
+    .bar-labels {
       display: flex;
       justify-content: space-between;
       font-size: 0.65rem;
       color: var(--muted);
       margin-top: 3px;
+    }
+
+    /* Price charts */
+    .price-charts {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 1.5rem;
+    }
+    .price-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.25rem;
+    }
+    .price-card-title { font-size: 0.85rem; font-weight: 600; margin-bottom: 0.75rem; }
+    .price-chart-wrap { overflow-x: auto; }
+    .price-chart-wrap canvas { display: block; }
+
+    /* Tooltip */
+    #heatmap-tooltip {
+      position: fixed;
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 0.72rem;
+      color: var(--text);
+      pointer-events: none;
+      display: none;
+      z-index: 100;
+      white-space: nowrap;
+      line-height: 1.5;
     }
 
     /* Legend */
@@ -200,9 +246,18 @@
 </div>
 
 <div class="history-section">
-  <h2>Historial &mdash; &uacute;ltimas 24 h</h2>
-  <div id="history"></div>
+  <h2>Últimas 24 horas</h2>
+  <div id="history-24h"></div>
 </div>
+
+<div class="history-section" style="margin-top:2rem">
+  <h2>Últimos 90 días</h2>
+  <div id="history-90d"></div>
+  <h2 style="margin-top:1.5rem">Evolución de precios</h2>
+  <div class="price-charts" id="price-charts"></div>
+</div>
+
+<div id="heatmap-tooltip"></div>
 
 <script>
   const STATUS_COLOR = {
@@ -293,50 +348,398 @@
     });
   }
 
-  function renderHistory(stations, history) {
-    const container = document.getElementById('history');
-    container.innerHTML = '';
+  // --- Heatmap constants ---
+  const CELL_W    = 10;
+  const CELL_H    = 10;
+  const PAD_LEFT  = 30;  // space for hour labels
+  const PAD_TOP   = 28;  // space for day labels
 
-    // Build per-evse history indexed by evseId
-    const evseHistory = {}; // evseId -> [{timestamp, status}]
+  // Resolved hex colors for canvas (CSS vars don't work on canvas)
+  const CANVAS_COLOR = {
+    AVAILABLE:    '#22c55e',
+    CHARGING:     '#ef4444',
+    OUT_OF_ORDER: '#f97316',
+    UNKNOWN:      '#94a3b8',
+    NODATA:       '#1e293b',
+  };
 
+  function buildHeatmap(evseId, history) {
+    // Map: day (YYYY-MM-DD) -> hour (0-23) -> { AVAILABLE, CHARGING, OUT_OF_ORDER, UNKNOWN }
+    const data = new Map();
     history.forEach(entry => {
+      const d    = new Date(entry.timestamp);
+      const day  = d.toISOString().slice(0, 10);
+      const hour = d.getUTCHours();
       entry.stations.forEach(st => {
         st.evses.forEach(ev => {
-          if (!evseHistory[ev.evseId]) evseHistory[ev.evseId] = [];
-          evseHistory[ev.evseId].push({ timestamp: entry.timestamp, status: ev.status });
+          if (ev.evseId !== evseId) return;
+          if (!data.has(day)) data.set(day, new Map());
+          const hourMap = data.get(day);
+          if (!hourMap.has(hour)) hourMap.set(hour, { AVAILABLE: 0, CHARGING: 0, OUT_OF_ORDER: 0, UNKNOWN: 0 });
+          const counts = hourMap.get(hour);
+          counts[ev.status] = (counts[ev.status] || 0) + 1;
+        });
+      });
+    });
+    return data;
+  }
+
+  function drawHeatmap(canvas, heatData) {
+    const days   = Array.from(heatData.keys()).sort();
+    const width  = PAD_LEFT + days.length * CELL_W;
+    const height = PAD_TOP  + 24 * CELL_H;
+
+    canvas.width  = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(0, 0, width, height);
+
+    // Hour labels (left, every 3h)
+    ctx.fillStyle = '#64748b';
+    ctx.font = '8px monospace';
+    ctx.textAlign = 'right';
+    for (let h = 0; h < 24; h += 3) {
+      const y = PAD_TOP + h * CELL_H + CELL_H - 2;
+      ctx.fillText(`${String(h).padStart(2, '0')}h`, PAD_LEFT - 3, y);
+    }
+
+    // Day labels (top, every 7 days)
+    ctx.textAlign = 'left';
+    days.forEach((day, i) => {
+      if (i % 7 !== 0) return;
+      ctx.save();
+      ctx.translate(PAD_LEFT + i * CELL_W + CELL_W / 2, PAD_TOP - 4);
+      ctx.rotate(-Math.PI / 3);
+      ctx.fillStyle = '#64748b';
+      ctx.font = '8px monospace';
+      ctx.fillText(day.slice(5), 0, 0); // MM-DD
+      ctx.restore();
+    });
+
+    // Cells
+    days.forEach((day, di) => {
+      const hourMap = heatData.get(day);
+      for (let h = 0; h < 24; h++) {
+        let color = CANVAS_COLOR.NODATA;
+        const counts = hourMap && hourMap.get(h);
+        if (counts) {
+          const dominant = Object.entries(counts).reduce((a, b) => b[1] > a[1] ? b : a)[0];
+          color = CANVAS_COLOR[dominant] || CANVAS_COLOR.UNKNOWN;
+        }
+        ctx.fillStyle = color;
+        ctx.fillRect(PAD_LEFT + di * CELL_W, PAD_TOP + h * CELL_H, CELL_W - 1, CELL_H - 1);
+      }
+    });
+
+    return days; // return for hit-testing
+  }
+
+  function attachTooltip(canvas, heatData, days) {
+    const tooltip = document.getElementById('heatmap-tooltip');
+
+    canvas.addEventListener('mousemove', e => {
+      const rect = canvas.getBoundingClientRect();
+      const mx   = e.clientX - rect.left;
+      const my   = e.clientY - rect.top;
+      const di   = Math.floor((mx - PAD_LEFT) / CELL_W);
+      const hi   = Math.floor((my - PAD_TOP)  / CELL_H);
+
+      if (di < 0 || di >= days.length || hi < 0 || hi >= 24) {
+        tooltip.style.display = 'none';
+        return;
+      }
+
+      const day     = days[di];
+      const hourMap = heatData.get(day);
+      const counts  = hourMap && hourMap.get(hi);
+
+      let lines = `<strong>${day} — ${String(hi).padStart(2,'0')}:00–${String(hi).padStart(2,'0')}:59</strong>`;
+      if (counts) {
+        const total = Object.values(counts).reduce((a, b) => a + b, 0);
+        const pct   = s => total ? Math.round(counts[s] / total * 100) : 0;
+        lines += `<br>Disponible: ${pct('AVAILABLE')}%`;
+        lines += `<br>Ocupado: ${pct('CHARGING')}%`;
+        if (counts.OUT_OF_ORDER) lines += `<br>Fuera de servicio: ${pct('OUT_OF_ORDER')}%`;
+      } else {
+        lines += '<br><em>Sin datos</em>';
+      }
+
+      tooltip.innerHTML  = lines;
+      tooltip.style.display = 'block';
+      tooltip.style.left = (e.clientX + 12) + 'px';
+      tooltip.style.top  = (e.clientY + 12) + 'px';
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+      tooltip.style.display = 'none';
+    });
+  }
+
+  // Line chart palette per EVSE index
+  const LINE_COLORS = ['#38bdf8', '#a78bfa'];
+
+  function renderPriceCharts(stations, history) {
+    const container = document.getElementById('price-charts');
+    container.innerHTML = '';
+
+    stations.forEach((station, si) => {
+      const card = document.createElement('div');
+      card.className = 'price-card';
+
+      const stationName = station.name || `Cargador ${station.id.slice(-6)}`;
+      const title = document.createElement('div');
+      title.className = 'price-card-title';
+      title.textContent = stationName;
+      card.appendChild(title);
+
+      // Collect price series per evseId from history
+      const series = {}; // evseId -> [{ts, price}]
+      history.forEach(entry => {
+        entry.stations.forEach(st => {
+          if (st.id !== station.id) return;
+          st.evses.forEach(ev => {
+            if (ev.price == null) return;
+            if (!series[ev.evseId]) series[ev.evseId] = [];
+            series[ev.evseId].push({ ts: new Date(entry.timestamp).getTime(), price: ev.price / 100 });
+          });
+        });
+      });
+
+      const evseIds = Object.keys(series);
+      if (evseIds.length === 0) {
+        const msg = document.createElement('p');
+        msg.style.cssText = 'color:var(--muted);font-size:0.8rem';
+        msg.textContent = 'Sin datos de precio aún.';
+        card.appendChild(msg);
+        container.appendChild(card);
+        return;
+      }
+
+      // Canvas dimensions
+      const PAD = { top: 10, right: 16, bottom: 32, left: 46 };
+      const W = 420, H = 160;
+
+      const wrap = document.createElement('div');
+      wrap.className = 'price-chart-wrap';
+      const canvas = document.createElement('canvas');
+      canvas.width  = W;
+      canvas.height = H;
+      wrap.appendChild(canvas);
+      card.appendChild(wrap);
+
+      // Legend
+      const legend = document.createElement('div');
+      legend.style.cssText = 'display:flex;gap:1rem;margin-top:8px;flex-wrap:wrap';
+      evseIds.forEach((id, i) => {
+        const item = document.createElement('div');
+        item.style.cssText = 'display:flex;align-items:center;gap:4px;font-size:0.7rem;color:var(--muted)';
+        item.innerHTML = `<div style="width:12px;height:3px;background:${LINE_COLORS[i % LINE_COLORS.length]};border-radius:2px"></div>${shortEvseId(id)}`;
+        legend.appendChild(item);
+      });
+      card.appendChild(legend);
+      container.appendChild(card);
+
+      // Draw
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(0, 0, W, H);
+
+      // Global time + price range across all series
+      let tsMin = Infinity, tsMax = -Infinity, pMin = Infinity, pMax = -Infinity;
+      evseIds.forEach(id => {
+        series[id].forEach(p => {
+          if (p.ts    < tsMin) tsMin = p.ts;
+          if (p.ts    > tsMax) tsMax = p.ts;
+          if (p.price < pMin)  pMin  = p.price;
+          if (p.price > pMax)  pMax  = p.price;
+        });
+      });
+
+      // Add padding to Y so a flat line isn't stuck at edge
+      const yRange = pMax - pMin || 0.1;
+      pMin = Math.max(0, pMin - yRange * 0.2);
+      pMax = pMax + yRange * 0.2;
+      const tsRange = tsMax - tsMin || 1;
+
+      const chartW = W - PAD.left - PAD.right;
+      const chartH = H - PAD.top  - PAD.bottom;
+
+      const toX = ts    => PAD.left + (ts - tsMin) / tsRange * chartW;
+      const toY = price => PAD.top  + chartH - (price - pMin) / (pMax - pMin) * chartH;
+
+      // Grid lines + Y labels
+      ctx.strokeStyle = '#334155';
+      ctx.lineWidth = 0.5;
+      ctx.fillStyle = '#64748b';
+      ctx.font = '9px monospace';
+      ctx.textAlign = 'right';
+      const yTicks = 4;
+      for (let i = 0; i <= yTicks; i++) {
+        const price = pMin + (pMax - pMin) * (i / yTicks);
+        const y = toY(price);
+        ctx.beginPath();
+        ctx.moveTo(PAD.left, y);
+        ctx.lineTo(W - PAD.right, y);
+        ctx.stroke();
+        ctx.fillText(`${price.toFixed(2)}€`, PAD.left - 4, y + 3);
+      }
+
+      // X axis labels (up to 5 ticks)
+      ctx.textAlign = 'center';
+      const xTicks = Math.min(5, evseIds.length > 0 ? series[evseIds[0]].length : 1);
+      for (let i = 0; i <= xTicks; i++) {
+        const ts = tsMin + tsRange * (i / xTicks);
+        const x  = toX(ts);
+        const d  = new Date(ts);
+        const label = `${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}h`;
+        ctx.fillStyle = '#64748b';
+        ctx.font = '8px monospace';
+        ctx.fillText(label, x, H - 6);
+      }
+
+      // Axes
+      ctx.strokeStyle = '#475569';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(PAD.left, PAD.top);
+      ctx.lineTo(PAD.left, H - PAD.bottom);
+      ctx.lineTo(W - PAD.right, H - PAD.bottom);
+      ctx.stroke();
+
+      // Lines
+      evseIds.forEach((id, i) => {
+        const pts = series[id];
+        if (pts.length < 2) return;
+        ctx.strokeStyle = LINE_COLORS[i % LINE_COLORS.length];
+        ctx.lineWidth = 1.5;
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        pts.forEach((p, j) => {
+          const x = toX(p.ts);
+          const y = toY(p.price);
+          j === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      });
+
+      // Tooltip
+      const tooltip = document.getElementById('heatmap-tooltip');
+      canvas.addEventListener('mousemove', e => {
+        const rect  = canvas.getBoundingClientRect();
+        const mx    = (e.clientX - rect.left) * (W / rect.width);
+        if (mx < PAD.left || mx > W - PAD.right) { tooltip.style.display = 'none'; return; }
+        const ts    = tsMin + (mx - PAD.left) / chartW * tsRange;
+        // Find nearest point across all series
+        let best = null, bestDist = Infinity;
+        evseIds.forEach((id, i) => {
+          series[id].forEach(p => {
+            const dist = Math.abs(p.ts - ts);
+            if (dist < bestDist) { bestDist = dist; best = { ...p, evseId: id, color: LINE_COLORS[i % LINE_COLORS.length] }; }
+          });
+        });
+        if (!best) { tooltip.style.display = 'none'; return; }
+        const d = new Date(best.ts);
+        tooltip.innerHTML = `<strong>${shortEvseId(best.evseId)}</strong><br>${formatDate(d.toISOString())}<br><span style="color:${best.color}">${best.price.toFixed(2)} €/kWh</span>`;
+        tooltip.style.display = 'block';
+        tooltip.style.left = (e.clientX + 12) + 'px';
+        tooltip.style.top  = (e.clientY + 12) + 'px';
+      });
+      canvas.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+    });
+  }
+
+  function render24h(stations, history) {
+    const container = document.getElementById('history-24h');
+    container.innerHTML = '';
+
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const recent = history.filter(e => new Date(e.timestamp).getTime() >= cutoff);
+
+    if (recent.length === 0) {
+      container.innerHTML = '<p style="color:var(--muted);font-size:0.85rem">Sin datos en las últimas 24 h.</p>';
+      return;
+    }
+
+    // Build per-evse entries
+    const evseEntries = {};
+    recent.forEach(entry => {
+      entry.stations.forEach(st => {
+        st.evses.forEach(ev => {
+          if (!evseEntries[ev.evseId]) evseEntries[ev.evseId] = [];
+          evseEntries[ev.evseId].push({ timestamp: entry.timestamp, status: ev.status });
         });
       });
     });
 
     stations.forEach(station => {
       const block = document.createElement('div');
-      block.className = 'timeline-block';
-
+      block.className = 'bar-block';
       const stationName = station.name || `Cargador ${station.id.slice(-6)}`;
-      let html = `<div class="timeline-title">${stationName}</div>`;
+      let html = `<div class="bar-block-title">${stationName}</div>`;
 
       station.evses.forEach(evse => {
-        const entries = evseHistory[evse.evseId] || [];
+        const entries = evseEntries[evse.evseId] || [];
         const cells = entries.map(e =>
-          `<div class="timeline-cell" style="background:${statusColor(e.status)}" title="${statusLabel(e.status)} — ${formatDate(e.timestamp)}"></div>`
+          `<div class="bar-cell" style="background:${statusColor(e.status)}" title="${statusLabel(e.status)} — ${formatDate(e.timestamp)}"></div>`
         ).join('');
-
-        const labelStart = entries.length > 0 ? formatDate(entries[0].timestamp).slice(0, 10) : '';
-        const labelEnd   = entries.length > 0 ? formatDate(entries[entries.length - 1].timestamp).slice(0, 10) : '';
-
+        const t0 = entries.length ? formatDate(entries[0].timestamp) : '';
+        const t1 = entries.length ? formatDate(entries[entries.length - 1].timestamp) : '';
         html += `
-          <div class="evse-timeline">
-            <div class="evse-timeline-label">${shortEvseId(evse.evseId)}</div>
-            <div class="timeline-bar">${cells || '<div style="flex:1;background:var(--border)"></div>'}</div>
-            <div class="timeline-labels">
-              <span>${labelStart}</span>
-              <span>${labelEnd}</span>
-            </div>
+          <div class="bar-evse">
+            <div class="bar-evse-label">${shortEvseId(evse.evseId)}</div>
+            <div class="bar-strip">${cells || '<div style="flex:1;background:var(--border)"></div>'}</div>
+            <div class="bar-labels"><span>${t0}</span><span>${t1}</span></div>
           </div>`;
       });
 
       block.innerHTML = html;
+      container.appendChild(block);
+    });
+  }
+
+  function renderHistory(stations, history) {
+    const container = document.getElementById('history-90d');
+    container.innerHTML = '';
+
+    if (history.length === 0) {
+      container.innerHTML = '<p style="color:var(--muted);font-size:0.85rem">Sin historial aún. Los datos se acumularán con el tiempo.</p>';
+      return;
+    }
+
+    stations.forEach(station => {
+      const block = document.createElement('div');
+      block.className = 'heatmap-block';
+
+      const stationName = station.name || `Cargador ${station.id.slice(-6)}`;
+      const title = document.createElement('div');
+      title.className = 'heatmap-block-title';
+      title.textContent = stationName;
+      block.appendChild(title);
+
+      station.evses.forEach(evse => {
+        const wrap = document.createElement('div');
+        wrap.className = 'heatmap-evse';
+
+        const label = document.createElement('div');
+        label.className = 'heatmap-evse-label';
+        label.textContent = shortEvseId(evse.evseId) + ' — eje X: días · eje Y: hora del día (UTC)';
+        wrap.appendChild(label);
+
+        const scroll = document.createElement('div');
+        scroll.className = 'heatmap-scroll';
+
+        const canvas = document.createElement('canvas');
+        scroll.appendChild(canvas);
+        wrap.appendChild(scroll);
+        block.appendChild(wrap);
+
+        const heatData = buildHeatmap(evse.evseId, history);
+        const days = drawHeatmap(canvas, heatData);
+        attachTooltip(canvas, heatData, days);
+      });
+
       container.appendChild(block);
     });
   }
@@ -351,7 +754,9 @@
       el.textContent = `Última actualización: ${formatDate(data.lastUpdate)}`;
 
       renderStations(data.stations);
+      render24h(data.stations, data.history);
       renderHistory(data.stations, data.history);
+      renderPriceCharts(data.stations, data.history);
     } catch (err) {
       el.textContent = 'No hay datos disponibles aún. Ejecuta fetch_chargers.py para inicializar.';
       document.getElementById('stations').innerHTML =

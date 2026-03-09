@@ -29,7 +29,7 @@ HEADERS = {
 DATA_DIR = Path(__file__).parent / "data"
 TOKEN_FILE = DATA_DIR / "token.json"
 CHARGERS_FILE = DATA_DIR / "chargers.json"
-MAX_HISTORY = 288  # 24h at 5-min intervals
+MAX_HISTORY = 25920  # 90 days at 5-min intervals
 
 
 def get_token() -> str:
@@ -127,7 +127,16 @@ def main():
             {
                 "id": s["id"],
                 "status": s["status"],
-                "evses": [{"evseId": e["evseId"], "status": e["status"]} for e in s["evses"]],
+                "evses": [
+                    {
+                        "evseId": e["evseId"],
+                        "status": e["status"],
+                        "price": e["plugs"][0]["price"] if e["plugs"] else None,
+                        "currency": e["plugs"][0]["currency"] if e["plugs"] else None,
+                        "typePrice": e["plugs"][0]["typePrice"] if e["plugs"] else None,
+                    }
+                    for e in s["evses"]
+                ],
             }
             for s in stations
         ],
