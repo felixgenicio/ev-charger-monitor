@@ -34,6 +34,22 @@
     header h1 { font-size: 1.5rem; font-weight: 700; }
     header p  { color: var(--muted); font-size: 0.875rem; margin-top: 0.25rem; }
 
+    #autoreload-btn {
+      margin-top: 0.75rem;
+      padding: 0.3rem 0.9rem;
+      border-radius: 9999px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--muted);
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    #autoreload-btn.on {
+      border-color: var(--available);
+      color: var(--available);
+    }
+
     .stations {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -234,6 +250,7 @@
 <header>
   <h1>Cargadores EV &mdash; Cadrete</h1>
   <p id="last-update">Cargando datos...</p>
+  <button id="autoreload-btn" onclick="toggleAutoReload()">Auto-refresco: OFF</button>
 </header>
 
 <div id="stations" class="stations"></div>
@@ -747,7 +764,7 @@
   async function loadData() {
     const el = document.getElementById('last-update');
     try {
-      const resp = await fetch('data/chargers.json');
+      const resp = await fetch(`data/chargers.json?_=${Date.now()}`);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
 
@@ -764,9 +781,23 @@
     }
   }
 
+  let autoReloadTimer = null;
+
+  function toggleAutoReload() {
+    const btn = document.getElementById('autoreload-btn');
+    if (autoReloadTimer) {
+      clearInterval(autoReloadTimer);
+      autoReloadTimer = null;
+      btn.textContent = 'Auto-refresco: OFF';
+      btn.classList.remove('on');
+    } else {
+      autoReloadTimer = setInterval(loadData, 5 * 60 * 1000);
+      btn.textContent = 'Auto-refresco: ON';
+      btn.classList.add('on');
+    }
+  }
+
   loadData();
-  // Reload every 5 minutes
-  setInterval(loadData, 5 * 60 * 1000);
 </script>
 
 </body>
