@@ -7,9 +7,9 @@
   <style>
     :root {
       --available: #22c55e;
-      --charging:  #ef4444;
+      --charging:  #f59e0b;
       --unknown:   #94a3b8;
-      --outoforder:#f97316;
+      --outoforder:#ef4444;
       --bg:        #0f172a;
       --card:      #1e293b;
       --border:    #334155;
@@ -235,7 +235,7 @@
       text-transform: uppercase;
     }
     .badge-available { background: #16532d; color: #4ade80; }
-    .badge-charging  { background: #7f1d1d; color: #f87171; }
+    .badge-charging  { background: #78350f; color: #fcd34d; }
     .badge-unknown   { background: #1e293b; color: #94a3b8; border: 1px solid var(--border); }
     .badge-outoforder{ background: #7c2d12; color: #fb923c; }
 
@@ -274,12 +274,17 @@
   <div class="price-charts" id="price-charts"></div>
 </div>
 
+<div class="history-section" style="margin-top:2rem">
+  <h2>Últimas sesiones de carga</h2>
+  <div id="sessions"></div>
+</div>
+
 <div id="heatmap-tooltip"></div>
 
 <script>
   const STATUS_COLOR = {
     AVAILABLE:   'var(--available)',
-    CHARGING:    'var(--charging)',
+    OCCUPIED:    'var(--charging)',
     OUT_OF_ORDER:'var(--outoforder)',
     UNKNOWN:     'var(--unknown)',
   };
@@ -290,7 +295,7 @@
 
   function statusBadgeClass(s) {
     if (s === 'AVAILABLE')    return 'badge-available';
-    if (s === 'CHARGING')     return 'badge-charging';
+    if (s === 'OCCUPIED')     return 'badge-charging';
     if (s === 'OUT_OF_ORDER') return 'badge-outoforder';
     return 'badge-unknown';
   }
@@ -298,7 +303,7 @@
   function statusLabel(s) {
     const labels = {
       AVAILABLE:    'Disponible',
-      CHARGING:     'Ocupado',
+      OCCUPIED:     'Ocupado',
       OUT_OF_ORDER: 'Fuera de servicio',
       UNKNOWN:      'Desconocido',
     };
@@ -374,14 +379,14 @@
   // Resolved hex colors for canvas (CSS vars don't work on canvas)
   const CANVAS_COLOR = {
     AVAILABLE:    '#22c55e',
-    CHARGING:     '#ef4444',
-    OUT_OF_ORDER: '#f97316',
+    OCCUPIED:     '#f59e0b',
+    OUT_OF_ORDER: '#ef4444',
     UNKNOWN:      '#94a3b8',
     NODATA:       '#1e293b',
   };
 
   function buildHeatmap(evseId, history) {
-    // Map: day (YYYY-MM-DD) -> hour (0-23) -> { AVAILABLE, CHARGING, OUT_OF_ORDER, UNKNOWN }
+    // Map: day (YYYY-MM-DD) -> hour (0-23) -> { AVAILABLE, OCCUPIED, OUT_OF_ORDER, UNKNOWN }
     const data = new Map();
     history.forEach(entry => {
       const d    = new Date(entry.timestamp);
@@ -392,7 +397,7 @@
           if (ev.evseId !== evseId) return;
           if (!data.has(day)) data.set(day, new Map());
           const hourMap = data.get(day);
-          if (!hourMap.has(hour)) hourMap.set(hour, { AVAILABLE: 0, CHARGING: 0, OUT_OF_ORDER: 0, UNKNOWN: 0 });
+          if (!hourMap.has(hour)) hourMap.set(hour, { AVAILABLE: 0, OCCUPIED: 0, OUT_OF_ORDER: 0, UNKNOWN: 0 });
           const counts = hourMap.get(hour);
           counts[ev.status] = (counts[ev.status] || 0) + 1;
         });
@@ -477,7 +482,7 @@
         const total = Object.values(counts).reduce((a, b) => a + b, 0);
         const pct   = s => total ? Math.round(counts[s] / total * 100) : 0;
         lines += `<br>Disponible: ${pct('AVAILABLE')}%`;
-        lines += `<br>Ocupado: ${pct('CHARGING')}%`;
+        lines += `<br>Ocupado: ${pct('OCCUPIED')}%`;
         if (counts.OUT_OF_ORDER) lines += `<br>Fuera de servicio: ${pct('OUT_OF_ORDER')}%`;
       } else {
         lines += '<br><em>Sin datos</em>';
@@ -761,6 +766,106 @@
     });
   }
 
+  function renderSessions(stations, history) {
+    const container = document.getElementById('sessions');
+    container.innerHTML = '';
+
+    if (history.length === 0) {
+      container.innerHTML = '<p style="color:var(--muted);font-size:0.85rem">Sin historial aún.</p>';
+      return;
+    }
+
+    // Collect all evseIds in display order
+    const evseOrder = [];
+    stations.forEach(st => st.evses.forEach(ev => evseOrder.push({ evseId: ev.evseId, stationName: st.name || st.id })));
+
+    // Build per-evse session list from history (oldest→newest)
+    const sorted = [...history].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+    evseOrder.forEach(({ evseId, stationName }) => {
+      const sessions = [];
+      let sessionStart = null;
+
+      sorted.forEach(entry => {
+        const st = entry.stations.find(s => s.evses.some(e => e.evseId === evseId));
+        if (!st) return;
+        const ev = st.evses.find(e => e.evseId === evseId);
+        if (!ev) return;
+        const occupied = ev.status === 'OCCUPIED';
+
+        if (occupied && sessionStart === null) {
+          sessionStart = entry.timestamp;
+        } else if (!occupied && sessionStart !== null) {
+          sessions.push({ start: sessionStart, end: entry.timestamp, ongoing: false });
+          sessionStart = null;
+        }
+      });
+
+      // Session still ongoing at last entry
+      if (sessionStart !== null) {
+        sessions.push({ start: sessionStart, end: null, ongoing: true });
+      }
+
+      const last20 = sessions.slice(-20).reverse();
+
+      const block = document.createElement('div');
+      block.className = 'heatmap-block';
+
+      const title = document.createElement('div');
+      title.className = 'heatmap-block-title';
+      title.textContent = stationName;
+      block.appendChild(title);
+
+      const label = document.createElement('div');
+      label.className = 'heatmap-evse-label';
+      label.textContent = shortEvseId(evseId);
+      block.appendChild(label);
+
+      if (last20.length === 0) {
+        const empty = document.createElement('p');
+        empty.style.cssText = 'color:var(--muted);font-size:0.85rem;margin:0.5rem 0';
+        empty.textContent = 'Sin sesiones registradas.';
+        block.appendChild(empty);
+      } else {
+        const table = document.createElement('table');
+        table.style.cssText = 'width:100%;border-collapse:collapse;font-size:0.85rem;margin-top:0.5rem';
+        table.innerHTML = `
+          <thead>
+            <tr style="color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">
+              <th style="padding:0.35rem 0.5rem">Inicio</th>
+              <th style="padding:0.35rem 0.5rem">Duración</th>
+            </tr>
+          </thead>`;
+        const tbody = document.createElement('tbody');
+
+        last20.forEach(({ start, end, ongoing }) => {
+          const startDate = new Date(start);
+          const endDate   = end ? new Date(end) : new Date();
+          const mins      = Math.round((endDate - startDate) / 60000);
+          const h         = Math.floor(mins / 60);
+          const m         = mins % 60;
+          const durStr    = h > 0 ? `${h}h ${m}min` : `${m}min`;
+
+          const tr = document.createElement('tr');
+          tr.style.borderBottom = '1px solid var(--border)';
+          tr.innerHTML = `
+            <td style="padding:0.35rem 0.5rem">${formatDate(start)}</td>
+            <td style="padding:0.35rem 0.5rem">
+              ${ongoing
+                ? `<span style="color:var(--charging);font-weight:600">En curso (${durStr})</span>`
+                : durStr}
+            </td>`;
+          tbody.appendChild(tr);
+        });
+
+        table.appendChild(tbody);
+        block.appendChild(table);
+      }
+
+      container.appendChild(block);
+    });
+  }
+
   async function loadData() {
     const el = document.getElementById('last-update');
     try {
@@ -774,6 +879,7 @@
       render24h(data.stations, data.history);
       renderHistory(data.stations, data.history);
       renderPriceCharts(data.stations, data.history);
+      renderSessions(data.stations, data.history);
     } catch (err) {
       el.textContent = 'No hay datos disponibles aún. Ejecuta fetch_chargers.py para inicializar.';
       document.getElementById('stations').innerHTML =
