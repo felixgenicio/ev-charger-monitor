@@ -285,7 +285,7 @@
   const STATUS_COLOR = {
     AVAILABLE:   'var(--available)',
     OCCUPIED:    'var(--charging)',
-    OUT_OF_ORDER:'var(--outoforder)',
+    OUTOFSERVICE:'var(--outoforder)',
     UNKNOWN:     'var(--unknown)',
   };
 
@@ -296,7 +296,7 @@
   function statusBadgeClass(s) {
     if (s === 'AVAILABLE')    return 'badge-available';
     if (s === 'OCCUPIED')     return 'badge-charging';
-    if (s === 'OUT_OF_ORDER') return 'badge-outoforder';
+    if (s === 'OUTOFSERVICE') return 'badge-outoforder';
     return 'badge-unknown';
   }
 
@@ -304,7 +304,7 @@
     const labels = {
       AVAILABLE:    'Disponible',
       OCCUPIED:     'Ocupado',
-      OUT_OF_ORDER: 'Fuera de servicio',
+      OUTOFSERVICE: 'Fuera de servicio',
       UNKNOWN:      'Desconocido',
     };
     return labels[s] || s;
@@ -380,13 +380,13 @@
   const CANVAS_COLOR = {
     AVAILABLE:    '#22c55e',
     OCCUPIED:     '#f59e0b',
-    OUT_OF_ORDER: '#ef4444',
+    OUTOFSERVICE: '#ef4444',
     UNKNOWN:      '#94a3b8',
     NODATA:       '#1e293b',
   };
 
   function buildHeatmap(evseId, history) {
-    // Map: day (YYYY-MM-DD) -> hour (0-23) -> { AVAILABLE, OCCUPIED, OUT_OF_ORDER, UNKNOWN }
+    // Map: day (YYYY-MM-DD) -> hour (0-23) -> { AVAILABLE, OCCUPIED, OUTOFSERVICE, UNKNOWN }
     const data = new Map();
     history.forEach(entry => {
       const d    = new Date(entry.timestamp);
@@ -397,7 +397,7 @@
           if (ev.evseId !== evseId) return;
           if (!data.has(day)) data.set(day, new Map());
           const hourMap = data.get(day);
-          if (!hourMap.has(hour)) hourMap.set(hour, { AVAILABLE: 0, OCCUPIED: 0, OUT_OF_ORDER: 0, UNKNOWN: 0 });
+          if (!hourMap.has(hour)) hourMap.set(hour, { AVAILABLE: 0, OCCUPIED: 0, OUTOFSERVICE: 0, UNKNOWN: 0 });
           const counts = hourMap.get(hour);
           counts[ev.status] = (counts[ev.status] || 0) + 1;
         });
@@ -483,7 +483,7 @@
         const pct   = s => total ? Math.round(counts[s] / total * 100) : 0;
         lines += `<br>Disponible: ${pct('AVAILABLE')}%`;
         lines += `<br>Ocupado: ${pct('OCCUPIED')}%`;
-        if (counts.OUT_OF_ORDER) lines += `<br>Fuera de servicio: ${pct('OUT_OF_ORDER')}%`;
+        if (counts.OUTOFSERVICE) lines += `<br>Fuera de servicio: ${pct('OUTOFSERVICE')}%`;
       } else {
         lines += '<br><em>Sin datos</em>';
       }
