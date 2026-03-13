@@ -855,7 +855,7 @@
             <td style="padding:0.35rem 0.5rem">
               ${ongoing
                 ? `<span style="color:var(--charging);font-weight:600">En curso (${durStr})</span>`
-                : durStr}
+                : `${durStr}${mins <= 15 ? ' <span style="background:#854d0e;color:#fde047;font-size:0.7rem;font-weight:700;padding:0.1rem 0.35rem;border-radius:3px;margin-left:0.4rem">CORTA</span>' : ''}`}
             </td>`;
           tbody.appendChild(tr);
         });
