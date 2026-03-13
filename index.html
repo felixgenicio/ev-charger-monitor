@@ -447,8 +447,10 @@
         let color = CANVAS_COLOR.NODATA;
         const counts = hourMap && hourMap.get(h);
         if (counts) {
-          const dominant = Object.entries(counts).reduce((a, b) => b[1] > a[1] ? b : a)[0];
-          color = CANVAS_COLOR[dominant] || CANVAS_COLOR.UNKNOWN;
+          if (counts.OCCUPIED > 0)          color = CANVAS_COLOR.OCCUPIED;
+          else if (counts.OUTOFSERVICE > 0) color = CANVAS_COLOR.OUTOFSERVICE;
+          else if (counts.AVAILABLE > 0)    color = CANVAS_COLOR.AVAILABLE;
+          else                              color = CANVAS_COLOR.UNKNOWN;
         }
         ctx.fillStyle = color;
         ctx.fillRect(PAD_LEFT + di * CELL_W, PAD_TOP + h * CELL_H, CELL_W - 1, CELL_H - 1);
